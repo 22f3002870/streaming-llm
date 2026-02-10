@@ -87,7 +87,6 @@ async def security_validate(request: Request):
         body = await request.json()
         user_id = body.get("userId")
         user_input = body.get("input")
-        category = body.get("category")
 
         if not user_id or not user_input:
             return JSONResponse(
@@ -100,24 +99,17 @@ async def security_validate(request: Request):
                 }
             )
 
-        client_ip = request.client.host
-        key = f"{user_id}:{client_ip}"
-
         now = time.time()
-        request_times = rate_limits[key]
 
-        # Remove timestamps older than 60 seconds (sliding window)
-        request_times = [t for t in request_times if now - t < 60]
-        rate_limits[key] = request_times
+        global rate_limits
 
-        # -------------------------
-        # Burst Protection (5 requests in 5 seconds)
-        # -------------------------
-        burst_window = [t for t in request_times if now - t < 5]
+        # Remove timestamps older than 60 seconds
+        rate_limits = [t for t in rate_limits if now - t < 60]
 
-        if len(burst_window) >= 5:
-            logging.warning(f"Burst limit exceeded for {key}")
+        # Strict burst: block if more than 5 in 5 seconds
+        recent = [t for t in rate_limits if now - t < 5]
 
+        if len(recent) >= 5:
             return JSONResponse(
                 status_code=429,
                 headers={"Retry-After": "5"},
@@ -129,12 +121,8 @@ async def security_validate(request: Request):
                 }
             )
 
-        # -------------------------
-        # Per-Minute Limit (29 per 60 sec)
-        # -------------------------
-        if len(request_times) >= MAX_REQUESTS_PER_MINUTE:
-            logging.warning(f"Rate limit exceeded for {key}")
-
+        # Strict per-minute limit
+        if len(rate_limits) >= 29:
             return JSONResponse(
                 status_code=429,
                 headers={"Retry-After": "60"},
@@ -146,9 +134,7 @@ async def security_validate(request: Request):
                 }
             )
 
-        # Record request
-        request_times.append(now)
-        rate_limits[key] = request_times
+        rate_limits.append(now)
 
         return {
             "blocked": False,
