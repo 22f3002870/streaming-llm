@@ -19,14 +19,11 @@ app = FastAPI()
 # Rate Limiting Configuration
 # -------------------------
 
-rate_limits = defaultdict(lambda: {
-    "tokens": 5,
-    "last_refill": time.time()
-})
+rate_limits = defaultdict(list)
+
 
 MAX_REQUESTS_PER_MINUTE = 29
-BURST_CAPACITY = 5
-REFILL_RATE = MAX_REQUESTS_PER_MINUTE / 60.0  # tokens per second
+
 
 @app.get("/")
 def health():
@@ -92,7 +89,6 @@ async def security_validate(request: Request):
         user_input = body.get("input")
         category = body.get("category")
 
-        # Basic validation
         if not user_id or not user_input:
             return JSONResponse(
                 status_code=400,
@@ -104,21 +100,20 @@ async def security_validate(request: Request):
                 }
             )
 
-        # Identify client by userId + IP
         client_ip = request.client.host
         key = f"{user_id}:{client_ip}"
 
         now = time.time()
-        bucket = rate_limits[key]
 
-        # Refill tokens
-        elapsed = now - bucket["last_refill"]
-        refill_tokens = elapsed * REFILL_RATE
-        bucket["tokens"] = min(BURST_CAPACITY, bucket["tokens"] + refill_tokens)
-        bucket["last_refill"] = now
+        # Get existing timestamps
+        request_times = rate_limits[key]
 
-        # If no tokens left → block
-        if bucket["tokens"] < 1:
+        # Remove timestamps older than 60 seconds
+        request_times = [t for t in request_times if now - t < 60]
+        rate_limits[key] = request_times
+
+        # Check if limit exceeded
+        if len(request_times) >= MAX_REQUESTS_PER_MINUTE:
             logging.warning(f"Rate limit exceeded for {key}")
 
             return JSONResponse(
@@ -128,12 +123,13 @@ async def security_validate(request: Request):
                     "blocked": True,
                     "reason": "Rate limit exceeded",
                     "sanitizedOutput": None,
-                    "confidence": 0.98
+                    "confidence": 0.99
                 }
             )
 
-        # Consume token
-        bucket["tokens"] -= 1
+        # Record this request
+        request_times.append(now)
+        rate_limits[key] = request_times
 
         return {
             "blocked": False,
