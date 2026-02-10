@@ -10,6 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 app = FastAPI()
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,7 +40,7 @@ async def stream_llm(request: Request):
     async def event_generator():
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 stream=True
             )
