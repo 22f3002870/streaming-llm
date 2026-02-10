@@ -104,15 +104,34 @@ async def security_validate(request: Request):
         key = f"{user_id}:{client_ip}"
 
         now = time.time()
-
-        # Get existing timestamps
         request_times = rate_limits[key]
 
-        # Remove timestamps older than 60 seconds
+        # Remove timestamps older than 60 seconds (sliding window)
         request_times = [t for t in request_times if now - t < 60]
         rate_limits[key] = request_times
 
-        # Check if limit exceeded
+        # -------------------------
+        # Burst Protection (5 requests in 5 seconds)
+        # -------------------------
+        burst_window = [t for t in request_times if now - t < 5]
+
+        if len(burst_window) >= 5:
+            logging.warning(f"Burst limit exceeded for {key}")
+
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": "5"},
+                content={
+                    "blocked": True,
+                    "reason": "Burst limit exceeded",
+                    "sanitizedOutput": None,
+                    "confidence": 0.99
+                }
+            )
+
+        # -------------------------
+        # Per-Minute Limit (29 per 60 sec)
+        # -------------------------
         if len(request_times) >= MAX_REQUESTS_PER_MINUTE:
             logging.warning(f"Rate limit exceeded for {key}")
 
@@ -127,7 +146,7 @@ async def security_validate(request: Request):
                 }
             )
 
-        # Record this request
+        # Record request
         request_times.append(now)
         rate_limits[key] = request_times
 
